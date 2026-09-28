@@ -111,3 +111,187 @@ For all questions, contact [noahrshinn@gmail.com](noahrshinn@gmail.com)
       primaryClass={cs.AI}
 }
 ```
+
+## ALFWorld Reflexion 2 个任务 x 2 轮尝试
+### 适配新模型的代码修改
+#### Modification 1
+
+在 `generate_reflections.py` 中，将导入、函数签名和反思调用分别改为：
+```python
+from utils import get_chat
+
+def update_memory(trial_log_path, env_configs, model):
+    # 保留原有函数体，仅替换生成 reflection 的那行
+    reflection = get_chat(reflection_query, model=model, max_tokens=256)
+```
+原代码调用的 get_completion() 写死了 text-davinci-003，该模型已退役
+
+#### Modification 2
+
+在 `main.py` 中，将更新记忆的两行改为：
+```python
+if args.use_memory and trial_idx + 1 < args.num_trials:
+    env_configs = update_memory(trial_log_path, env_configs, args.model)
+```
+这同时避免最后一轮结束后生成不会再使用的反思。所选模型需要兼容当前代码的 Chat Completions 接口及 stop、temperature、max_tokens 参数。
+
+#### Modification 3
+
+单次尝试步数把 `alfworld_trial.py` 的 `while cur_step < 49` 改成30。这里 think: 也占一次循环和模型调用，不要把上限压得过低。
+
+#### Modification 4
+
+新版 ALFWorld 通过 `get_environment()` 获取环境类，不能再直接从模块中查找 `AlfredTWEnv`
+
+### 运行
+#### 配置环境
+
+在 Ubuntu 中
+```bash
+conda create -n reflexion python=3.9 -y
+conda activate reflexion
+cd /mnt/d/Reproductions/reflexion-reproduction/alfworld_runs
+python -m pip install -r requirements.txt
+
+# 安装 make, GCC 等编译工具
+sudo apt update
+sudo apt install -y build-essential
+# 检查
+gcc --version
+make --version
+
+python -m pip install "alfworld==0.4.2" pyyaml "spacy==3.7.5" "thinc==8.2.5" "numpy==1.26.4" --only-binary=spacy,thinc,numpy
+```
+
+#### 下载任务数据到 D:\Reproductions\alfworld-data
+
+```bash
+export ALFWORLD_DATA="/mnt/d/Reproductions/alfworld-data"
+mkdir -p "$ALFWORLD_DATA"
+alfworld-download
+```
+
+| 下载文件 | 用途 |
+| ------- | ---- |
+| json_2.1.1_json.zip | 任务描述、轨迹等 JSON 数据 |
+| json_2.1.1_pddl.zip | 任务的 PDDL 规划描述 |
+| json_2.1.2_tw-pddl.zip | TextWorld 使用的环境文件 |
+| mrcnn_alfred_objects_sep13_004.pth | 视觉环境的物体检测模型 |
+
+```
+alfworld-data\
+├── json_2.1.1\
+│   ├── train\
+│   ├── valid_seen\
+│   └── valid_unseen\
+├── detectors\
+│   └── mrcnn_alfred_objects_sep13_004.pth
+└── logic\
+    ├── alfred.pddl
+    └── alfred.twl2
+```
+
+如果连接超时可从浏览器下载，原脚本最后的 logic 文件复制步骤可执行：
+```bash
+python - <<'PY'
+import os
+import shutil
+from pathlib import Path
+from alfworld.info import ALFRED_PDDL_PATH, ALFRED_TWL2_PATH
+
+logic = Path(os.environ["ALFWORLD_DATA"]) / "logic"
+logic.mkdir(parents=True, exist_ok=True)
+for source, name in [
+    (ALFRED_PDDL_PATH, "alfred.pddl"),
+    (ALFRED_TWL2_PATH, "alfred.twl2"),
+]:
+    target = logic / name
+    if not target.exists():
+        shutil.copyfile(source, target)
+    print(target)
+PY
+```
+
+#### 运行脚本
+```bash
+read -rs OPENAI_API_KEY
+# 输入 API KEY
+export OPENAI_API_KEY
+
+cd /mnt/d/Reproductions/reflexion-reproduction/alfworld_runs
+export ALFWORLD_DATA="/mnt/d/Reproductions/alfworld-data"
+python main.py --num_trials 2 --num_envs 2 --run_name "smoke_reflexion_2x2" --use_memory --model "gpt-4o-mini"
+```
+
+### 问题
+1. 模型生成的动作带了多余的 >
+2. 模型编造观察结果
+
+有待探究原因，检查 paper 中有没有说到这个问题
+
+**主要是模型把输入当成了“继续写一段交互记录”，而程序期待的是“只返回下一条动作”。** 两者的输出约定没有对齐。
+
+你输入的 few-shot 是这样的：
+
+```text
+> go to drawer 1
+The drawer 1 is closed.
+> open drawer 1
+You open the drawer 1...
+```
+
+这里同时包含了动作前缀、动作和环境反馈。模型能模仿整段格式，但不一定知道哪些部分只能由程序提供。
+
+**为什么多输出一个 `>`？**
+
+代码把提示词拼成：
+
+```python
+str(env_history) + ">"
+```
+
+它期待模型直接续写 `go to drawer 1`。但 Chat 模型是在生成一个**新的回复消息**，不保证将回复当作用户消息最后那个 `>` 的直接延续，因此可能完整输出：
+
+```text
+> go to drawer 1
+```
+
+之后日志程序又加一个 `>`，就显示成：
+
+```text
+> > go to drawer 1
+```
+
+**为什么会编造动作或环境反馈？**
+
+模型本来就负责生成动作，例如 `go to drawer 1`。真正的问题分为两种：
+
+| 输出 | 问题 |
+|---|---|
+| `open desk 1` | 生成了环境可能不支持的动作 |
+| `You open drawer 1. Inside, you see...` | 越过职责，生成了本该由环境返回的观察 |
+
+当前调用把示例和历史都放在一条 `user` 消息中，没有明确区分“模型负责动作，环境负责观察”；程序也没有校验返回内容，就直接传给 `env.step()`。
+
+从日志看，还出现了一个恶性循环：
+
+```text
+输出带 > 的动作
+  ↓
+环境返回 Nothing happens.
+  ↓
+模型没有正确纠错，反而自行描述“打开了抽屉”
+  ↓
+程序又把这段描述当成动作
+  ↓
+环境再次返回 Nothing happens.
+```
+
+**`stop=['\n']` 只能限制输出到换行处，不能保证这一行是动作。** 一行编造的观察同样可以通过。
+
+所以需要分两层处理：
+
+- **格式层**：去掉前导 `>`，明确要求只输出一条动作或 `think:`。
+- **语义层**：检查输出是不是允许的动作形式，不能把 `You open...` 之类的叙述交给环境执行。
+
+这些是根据输入结构和日志得出的解释，无法从日志直接确认模型内部的具体原因。换成 `gpt-4o-mini` 后，原来依赖模型自行遵守的格式约定，需要更明确地落实到提示和代码中。

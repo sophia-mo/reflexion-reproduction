@@ -99,9 +99,14 @@ def main(args) -> None:
         # run trial
         run_trial(trial_log_path, world_log_path, trial_idx, env_configs, args.use_memory, args.model)
 
-        # update memory if needed
-        if args.use_memory:
-            env_configs: List[Dict[str, Any]] = update_memory(trial_log_path, env_configs)
+        """ Modification 2 """
+        # # update memory if needed
+        # if args.use_memory:
+        #     env_configs: List[Dict[str, Any]] = update_memory(trial_log_path, env_configs)
+
+        if args.use_memory and trial_idx + 1 < args.num_trials:
+            env_configs = update_memory(trial_log_path, env_configs, args.model)
+        """ End """
 
         # log env configs for trial
         with open(trial_env_configs_log_path, 'w') as wf:

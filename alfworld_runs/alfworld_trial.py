@@ -53,7 +53,10 @@ def alfworld_run(env, base_prompt, memory: List[str], to_print=True, ob='', mode
         print(ob)
         sys.stdout.flush()
     cur_step = 0
-    while cur_step < 49:
+    """ Modification 3 """
+    # while cur_step < 49:
+    while cur_step < 30:
+        """ End """
         action = llm(str(env_history) + ">", stop=['\n'], model=model).strip()
         env_history.add("action", action)
         observation, reward, done, info = env.step([action])
@@ -95,7 +98,11 @@ def run_trial(
         config = yaml.safe_load(reader)
     split = "eval_out_of_distribution"
 
-    env = getattr(alfworld.agents.environment, config["env"]["type"])(config, train_eval=split)
+    """ Modification 4 """
+    # env = getattr(alfworld.agents.environment, config["env"]["type"])(config, train_eval=split)
+    env_class = alfworld.agents.environment.get_environment(config["env"]["type"])
+    env = env_class(config, train_eval=split)
+    """ End """
     env = env.init_env(batch_size=1)
 
     num_successes: int = 0

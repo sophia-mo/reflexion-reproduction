@@ -1,4 +1,7 @@
-from utils import get_completion
+""" Modification 1 """
+# from utils import get_completion
+from utils import get_chat
+""" End """
 
 from typing import List, Dict, Any
 
@@ -26,7 +29,28 @@ def _generate_reflection_query(log_str: str, memory: List[str]) -> str:
     query += '\n\nNew plan:'
     return query
 
-def update_memory(trial_log_path: str, env_configs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+""" Modification 1 """
+# def update_memory(trial_log_path: str, env_configs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+#     """Updates the given env_config with the appropriate reflections."""
+#     with open(trial_log_path, 'r') as f:
+#         full_log: str = f.read()
+        
+#     env_logs: List[str] = full_log.split('#####\n\n#####')
+#     assert len(env_logs) == len(env_configs), print(f'bad: {len(env_logs)}, {len(env_configs)}')
+#     for i, env in enumerate(env_configs):
+#         # if unsolved, get reflection and update env config
+#         if not env['is_success'] and not env['skip']:
+#             if len(env['memory']) > 3:
+#                 memory: List[str] = env['memory'][-3:]
+#             else:
+#                 memory: List[str] = env['memory']
+#             reflection_query: str = _generate_reflection_query(env_logs[i], memory)
+#             reflection: str = get_completion(reflection_query) # type: ignore
+#             env_configs[i]['memory'] += [reflection]
+                
+#     return env_configs
+
+def update_memory(trial_log_path, env_configs, model):
     """Updates the given env_config with the appropriate reflections."""
     with open(trial_log_path, 'r') as f:
         full_log: str = f.read()
@@ -41,7 +65,8 @@ def update_memory(trial_log_path: str, env_configs: List[Dict[str, Any]]) -> Lis
             else:
                 memory: List[str] = env['memory']
             reflection_query: str = _generate_reflection_query(env_logs[i], memory)
-            reflection: str = get_completion(reflection_query) # type: ignore
+            reflection = get_chat(reflection_query, model=model, max_tokens=256)
             env_configs[i]['memory'] += [reflection]
                 
     return env_configs
+""" End """
